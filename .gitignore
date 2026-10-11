@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment Variables
+.env
+.env.local
+
+# Data (Don't commit large datasets or models)
+data/raw/*
+data/processed/*
+data/models/*.pkl
+data/models/*.cbm
+data/models/*.onnx
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# IDE Settings
+.vscode/*
+!.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
