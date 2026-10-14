@@ -15,7 +15,6 @@ dependencies = [
     "numpy>=1.26.0",
     "scikit-learn>=1.4.0",
     "catboost>=1.2.0",
-    "mapie>=0.8.0",
     "shap>=0.44.0",
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
