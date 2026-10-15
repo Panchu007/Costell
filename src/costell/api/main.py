@@ -5,9 +5,12 @@ from contextlib import asynccontextmanager
 import pandas as pd
 from catboost import CatBoostRegressor
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import Field
 
 from costell.api.schemas import CostBreakdown, EstimationRequest, EstimationResponse
 from costell.config import settings
+from costell.llm.decomposer import WorkBreakdownStructure, decompose_prd
 
 # Global variable to hold the model
 model: CatBoostRegressor | None = None
@@ -46,22 +49,11 @@ def _calculate_cost_breakdown(
     request: EstimationRequest,
 ) -> CostBreakdown:
     """Calculate the full cost breakdown for a given effort value."""
-    # 1. Personnel Cost = Effort (hours) × Blended Hourly Rate
     personnel_cost = effort_hours * request.blended_hourly_rate
-
-    # 2. Tooling Cost = Monthly cost × Duration
     tooling_cost = request.tooling_cost_per_month * request.duration
-
-    # 3. Cloud Cost = Monthly cost × Duration
     cloud_cost = request.cloud_cost_per_month * request.duration
-
-    # 4. Subtotal before contingency
     subtotal = personnel_cost + tooling_cost + cloud_cost
-
-    # 5. Contingency = Subtotal × Contingency %
     contingency = subtotal * (request.contingency_percent / 100.0)
-
-    # 6. Grand Total
     total_cost = subtotal + contingency
 
     return CostBreakdown(
@@ -87,7 +79,6 @@ def estimate(request: EstimationRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Model is not loaded yet.")
 
-    # Convert the request into a DataFrame for CatBoost
     df = pd.DataFrame(
         [
             {
@@ -101,14 +92,10 @@ def estimate(request: EstimationRequest):
         ]
     )
 
-    # Predict P50 effort
     p50_effort = float(model.predict(df)[0])
-
-    # Calculate P80 effort interval using the conformal margin
     p80_lower_effort = max(p50_effort - Q_MARGIN, 0)
     p80_upper_effort = p50_effort + Q_MARGIN
 
-    # Calculate cost breakdowns for all three effort scenarios
     p50_cost = _calculate_cost_breakdown(p50_effort, request)
     p80_lower_cost = _calculate_cost_breakdown(p80_lower_effort, request)
     p80_upper_cost = _calculate_cost_breakdown(p80_upper_effort, request)
@@ -122,3 +109,23 @@ def estimate(request: EstimationRequest):
         p80_upper_cost=p80_upper_cost,
         confidence_level=0.8,
     )
+
+
+# ============================================================
+# NEW: LLM Scope Decomposition Endpoint
+# ============================================================
+class DecomposeRequest(PydanticBaseModel):
+    """Input schema for the /decompose endpoint."""
+
+    prd_text: str = Field(..., min_length=50, description="The PRD text to decompose.")
+
+
+@app.post("/decompose", response_model=WorkBreakdownStructure)
+def decompose(request: DecomposeRequest):
+    """
+    Decompose a PRD into a Work Breakdown Structure using the LLM.
+    """
+    try:
+        return decompose_prd(request.prd_text)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))

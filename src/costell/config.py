@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # LLM configuration
-    llm_model_name: str = "qwen2.5:72b"
-    llm_api_key: SecretStr | None = None
+    LLM_MODEL_NAME: str = "llama-3.3-70b-versatile"
+    GROQ_API_KEY: SecretStr | None = None
 
     # Data directories
     raw_data_dir: Path = _PROJECT_ROOT / "data" / "raw"
