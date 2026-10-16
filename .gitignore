@@ -28,3 +28,7 @@ data/models/*.onnx
 # OS
 .DS_Store
 Thumbs.db
+
+
+# SQLite Database
+*.db

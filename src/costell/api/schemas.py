@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 class EstimationRequest(BaseModel):
     """Input schema for the /estimate endpoint."""
 
+    # --- Project Metadata ---
+    project_name: str = Field(default="Untitled Project", description="Name of the project.")
+
     # --- Effort Features ---
     estimated_effort: float = Field(
         ..., gt=0, description="The initial human estimate in person-hours."
