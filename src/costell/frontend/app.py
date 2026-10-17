@@ -537,6 +537,61 @@ with tab2:
             bias = kpis["bias"]
             bias_label = "Underestimate" if bias and bias < 0 else "Overestimate"
             col4.metric("Bias", f"{bias * 100:+.2f}%" if bias is not None else "—", bias_label)
+            # --- Estimation Bias Chart ---
+            st.markdown("---")
+            st.markdown("### 📊 Estimate vs. Actual Effort (Variance)")
+
+            # Filter history for projects that have actuals logged
+            completed = [r for r in history if r.get("actual_effort") is not None]
+
+            if completed:
+                # Extract data for the chart
+                names = [f"#{r['id']} {r['project_name'][:15]}" for r in completed]
+                est_efforts = [r["p50_effort"] for r in completed]
+                act_efforts = [r["actual_effort"] for r in completed]
+
+                # Calculate variance percentages
+                variances = [
+                    ((act - est) / est) * 100 for est, act in zip(est_efforts, act_efforts)
+                ]
+
+                # Create the grouped bar chart
+                fig_bias = go.Figure(
+                    data=[
+                        go.Bar(
+                            name="Estimated (P50)", x=names, y=est_efforts, marker_color="#3b82f6"
+                        ),
+                        go.Bar(name="Actual", x=names, y=act_efforts, marker_color="#f97316"),
+                    ]
+                )
+
+                fig_bias.update_layout(
+                    title="Estimated vs Actual Effort per Project",
+                    yaxis_title="Effort (Hours)",
+                    barmode="group",
+                    height=400,
+                    margin=dict(l=20, r=20, t=50, b=20),
+                )
+                st.plotly_chart(fig_bias, use_container_width=True)
+
+                # Display the variance percentage table
+                st.markdown("#### Variance Breakdown")
+                variance_data = []
+                for i, r in enumerate(completed):
+                    variance_data.append(
+                        {
+                            "Project": r["project_name"],
+                            "Estimated": f"{est_efforts[i]:,.0f}",
+                            "Actual": f"{act_efforts[i]:,.0f}",
+                            "Variance": f"{variances[i]:+.1f}%",
+                            "Status": "🔴 Underestimated"
+                            if variances[i] > 0
+                            else "🟢 Overestimated",
+                        }
+                    )
+                st.table(variance_data)
+            else:
+                st.info("Log actuals for at least one project to see the variance chart.")
 
 
 # ============================================================
