@@ -247,3 +247,130 @@ def decompose(request: DecomposeRequest):
         return decompose_prd(request.prd_text)
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# BASELINE: COCOMO II
+# ============================================================
+from costell.ml.baselines.cocomo import estimate_effort_cocomo
+
+
+class CocomoRequest(PydanticBaseModel):
+    """Input schema for the /baselines/cocomo endpoint."""
+
+    function_points: float = Field(..., gt=0, description="Adjusted Function Points (AFP).")
+    language: str = Field(..., description="Programming language for FP-to-SLOC conversion.")
+
+
+@app.post("/baselines/cocomo")
+def cocomo_baseline(request: CocomoRequest):
+    """
+    Estimate effort using the classic COCOMO II formula.
+    Used as a baseline to compare against our ML model.
+    """
+    return estimate_effort_cocomo(
+        function_points=request.function_points,
+        language=request.language,
+    )
+
+
+# ============================================================
+# BASELINE: Analogy-Based Estimation (k-NN)
+# ============================================================
+from costell.ml.baselines.analogy import estimate_effort_analogy
+
+
+class AnalogyRequest(PydanticBaseModel):
+    """Input schema for the /baselines/analogy endpoint."""
+
+    function_points: float = Field(..., gt=0, description="Adjusted Function Points.")
+    team_size: float = Field(..., gt=0, description="Number of people on the team.")
+    duration: float = Field(..., gt=0, description="Project duration in months.")
+    k_neighbors: int = Field(
+        default=3, ge=1, le=10, description="Number of similar projects to average."
+    )
+
+
+@app.post("/baselines/analogy")
+def analogy_baseline(request: AnalogyRequest):
+    """
+    Estimate effort by finding the k most similar historical projects and averaging their actuals.
+    """
+    try:
+        return estimate_effort_analogy(
+            function_points=request.function_points,
+            team_size=request.team_size,
+            duration=request.duration,
+            k_neighbors=request.k_neighbors,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# BASELINE: Monte-Carlo Simulation
+# ============================================================
+from costell.ml.baselines.monte_carlo import run_monte_carlo
+
+
+class MonteCarloRequest(PydanticBaseModel):
+    """Input schema for the /baselines/monte-carlo endpoint."""
+
+    estimated_effort: float = Field(..., gt=0)
+    team_size: float = Field(..., gt=0)
+    duration: float = Field(..., gt=0)
+    function_points: float = Field(..., gt=0)
+    language: str = Field(...)
+    dataset_source: str = Field(default="user_input")
+    blended_hourly_rate: float = Field(..., gt=0)
+    tooling_cost_per_month: float = Field(..., ge=0)
+    cloud_cost_per_month: float = Field(..., ge=0)
+    contingency_percent: float = Field(..., ge=0)
+    n_simulations: int = Field(default=10000, ge=1000, le=50000)
+
+
+@app.post("/baselines/monte-carlo")
+def monte_carlo_baseline(request: MonteCarloRequest):
+    """
+    Run a Monte-Carlo simulation to generate a probability distribution of project costs.
+    """
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model is not loaded yet.")
+
+    # 1. Get the P50 effort from the ML model
+    df = pd.DataFrame(
+        [
+            {
+                "estimated_effort": request.estimated_effort,
+                "team_size": request.team_size,
+                "duration": request.duration,
+                "function_points": request.function_points,
+                "language": request.language,
+                "dataset_source": request.dataset_source,
+            }
+        ]
+    )
+    p50_effort = float(model.predict(df)[0])
+
+    # 2. We need historical residuals to simulate realistic variance.
+    # In a production system, we'd pull these from the DB. For now, we'll use a realistic proxy.
+    # The training MMRE was ~14.4%, so residuals typically range from 5% to 35%.
+    residuals = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35]
+
+    # 3. Calculate fixed costs (Tooling + Cloud)
+    fixed_costs = (request.tooling_cost_per_month + request.cloud_cost_per_month) * request.duration
+
+    # 4. Run the simulation
+    result = run_monte_carlo(
+        p50_effort=p50_effort,
+        mre_residuals=residuals,
+        blended_hourly_rate=request.blended_hourly_rate,
+        fixed_costs=fixed_costs,
+        contingency_percent=request.contingency_percent,
+        n_simulations=request.n_simulations,
+    )
+
+    # Add the base effort to the response for reference
+    result["base_p50_effort"] = round(p50_effort, 2)
+
+    return result

@@ -15,6 +15,9 @@ ESTIMATE_ENDPOINT = f"{API_URL}/estimate"
 DECOMPOSE_ENDPOINT = f"{API_URL}/decompose"
 HISTORY_ENDPOINT = f"{API_URL}/history"
 KPIS_ENDPOINT = f"{API_URL}/kpis"
+COCOMO_ENDPOINT = f"{API_URL}/baselines/cocomo"
+ANALOGY_ENDPOINT = f"{API_URL}/baselines/analogy"
+MONTE_CARLO_ENDPOINT = f"{API_URL}/baselines/monte-carlo"
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Costell", page_icon="📊", layout="wide")
@@ -26,7 +29,7 @@ st.markdown("---")
 
 
 # ============================================================
-# PDF Report Generator
+# PDF Report Generator (Kept from previous)
 # ============================================================
 def generate_pdf_report(payload: dict, result: dict) -> bytes:
     pdf = FPDF()
@@ -118,7 +121,7 @@ def generate_pdf_report(payload: dict, result: dict) -> bytes:
 
 
 # ============================================================
-# CSV Export Helper
+# CSV Export Helper (Kept from previous)
 # ============================================================
 def generate_csv_report(payload: dict, result: dict) -> str:
     output = StringIO()
@@ -148,14 +151,13 @@ def generate_csv_report(payload: dict, result: dict) -> str:
 # ============================================================
 # TABS
 # ============================================================
-tab1, tab2 = st.tabs(["💰 Estimation", "📜 History & KPIs"])
+tab1, tab2, tab3 = st.tabs(["💰 Estimation", "📜 History & KPIs", "🔬 Model Comparison"])
 
 
 # ============================================================
-# TAB 1: Estimation
+# TAB 1: Estimation (Kept from previous)
 # ============================================================
 with tab1:
-    # --- Sidebar: Financial Parameters ---
     st.sidebar.header("💰 Financial Parameters")
     blended_hourly_rate = st.sidebar.number_input(
         "Blended Hourly Rate (Rs.)", min_value=100.0, value=2500.0, step=100.0
@@ -180,10 +182,8 @@ with tab1:
         index=0,
     )
 
-    # --- Main: Project Name ---
     project_name = st.text_input("📝 Project Name", value="Untitled Project")
 
-    # --- Step 1: Effort Mode Selector ---
     st.markdown("## Step 1 — Determine Project Effort")
     effort_mode = st.radio(
         "How would you like to determine the effort?",
@@ -214,17 +214,15 @@ with tab1:
                 value=st.session_state["function_points"],
                 step=10.0,
             )
-
     else:
         prd_text = st.text_area(
             "Paste your Product Requirement Document (PRD):",
             height=200,
-            placeholder="Example: Build a food delivery app with user login, restaurant listing, cart, online payment, and order tracking...",
+            placeholder="Example: Build a food delivery app...",
         )
-
         if st.button("🔍 Decompose Scope", type="primary"):
             if len(prd_text.strip()) < 50:
-                st.warning("Please paste a longer PRD (at least 50 characters).")
+                st.warning("Please paste a longer PRD.")
             else:
                 with st.spinner("Analyzing your PRD with the LLM..."):
                     try:
@@ -237,7 +235,6 @@ with tab1:
                             st.error(f"API Error ({response.status_code}): {response.text}")
                     except requests.exceptions.ConnectionError:
                         st.error("❌ Could not connect to the API.")
-
         if st.session_state.get("wbs_data"):
             wbs = st.session_state["wbs_data"]
             st.markdown("### 📋 Project Summary")
@@ -262,10 +259,8 @@ with tab1:
                 f"✅ The estimated **{total_hours:,.0f} hours** from the WBS will be used for the cost calculation below."
             )
 
-    # --- Step 2: Calculate ---
     st.markdown("---")
     st.markdown("## Step 2 — Calculate Project Cost")
-
     if st.button("🚀 Calculate Full Project Cost", type="primary"):
         payload = {
             "project_name": project_name,
@@ -293,14 +288,11 @@ with tab1:
         except requests.exceptions.ConnectionError:
             st.error("❌ Could not connect to the API.")
 
-    # --- Results ---
     if st.session_state.get("show_results"):
         data = st.session_state["result"]
         payload = st.session_state["payload"]
-
         st.markdown("---")
         st.markdown("## 💰 Prediction Results")
-
         col1, col2, col3 = st.columns(3)
         col1.metric(
             "P50 (Most Likely)",
@@ -317,12 +309,10 @@ with tab1:
             f"₹{data['p80_upper_cost']['total_cost']:,.0f}",
             f"{data['p80_upper_effort']:,.0f} hrs",
         )
-
         safe_budget = data["p80_upper_cost"]["total_cost"]
         st.success(
             f"**Safe Budget Recommendation:** Request **₹{safe_budget:,.0f}** to be **80% confident** the project stays within budget."
         )
-
         st.markdown("### 📥 Download Report")
         col_pdf, col_csv, _ = st.columns([1, 1, 2])
         with col_pdf:
@@ -341,7 +331,6 @@ with tab1:
                 mime="text/csv",
                 use_container_width=True,
             )
-
         st.markdown("### 📊 Cost Breakdown (P50 Scenario)")
         p50 = data["p50_cost"]
         st.table(
@@ -356,7 +345,6 @@ with tab1:
                 ],
             }
         )
-
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
@@ -384,7 +372,6 @@ with tab1:
             margin=dict(l=20, r=20, t=50, b=20),
         )
         st.plotly_chart(fig, use_container_width=True)
-
         pie_fig = go.Figure(
             data=[
                 go.Pie(
@@ -404,12 +391,10 @@ with tab1:
 
 
 # ============================================================
-# TAB 2: History & KPIs
+# TAB 2: History & KPIs (Kept from previous)
 # ============================================================
 with tab2:
     st.header("📜 Project History & Variance Tracking")
-
-    # --- Fetch history ---
     try:
         history_response = requests.get(HISTORY_ENDPOINT, timeout=10)
         history = history_response.json() if history_response.status_code == 200 else []
@@ -420,7 +405,6 @@ with tab2:
     if not history:
         st.info("No estimates yet. Create one in the **💰 Estimation** tab first.")
     else:
-        # --- History Table ---
         st.markdown(f"### 🗂️ All Estimates ({len(history)} total)")
         st.dataframe(
             [
@@ -438,11 +422,9 @@ with tab2:
             use_container_width=True,
         )
 
-        # --- Log Actuals ---
         st.markdown("---")
         st.markdown("### ✏️ Log Actual Effort & Cost")
         st.caption("After a project is complete, log the actuals here to track variance over time.")
-
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             selected_id = st.selectbox(
@@ -460,7 +442,6 @@ with tab2:
             actual_cost = st.number_input(
                 "Actual Cost (₹)", min_value=0.0, value=8000000.0, step=100000.0
             )
-
         if st.button("💾 Save Actuals"):
             try:
                 patch_response = requests.patch(
@@ -476,17 +457,14 @@ with tab2:
             except requests.exceptions.ConnectionError:
                 st.error("❌ Could not connect to the API.")
 
-        # --- KPIs ---
         st.markdown("---")
         st.markdown("### 📊 Variance KPIs")
         st.caption("Calculated from all projects with logged actuals.")
-
         try:
             kpis_response = requests.get(KPIS_ENDPOINT, timeout=10)
             kpis = kpis_response.json() if kpis_response.status_code == 200 else {}
         except requests.exceptions.ConnectionError:
             kpis = {}
-
         if kpis.get("completed_projects", 0) == 0:
             st.info("Log at least one actual to see KPIs.")
         else:
@@ -499,6 +477,166 @@ with tab2:
             bias = kpis["bias"]
             bias_label = "Underestimate" if bias and bias < 0 else "Overestimate"
             col4.metric("Bias", f"{bias * 100:+.2f}%" if bias is not None else "—", bias_label)
+
+
+# ============================================================
+# TAB 3: Model Comparison & Monte-Carlo
+# ============================================================
+with tab3:
+    st.header("🔬 Model Comparison & Monte-Carlo Simulation")
+    st.markdown(
+        "Run the same project through all four estimation models: "
+        "**ML (CatBoost)**, **COCOMO II**, **Analogy (k-NN)**, and **Monte-Carlo**."
+    )
+
+    if "payload" not in st.session_state or "result" not in st.session_state:
+        st.info(
+            "👈 Please run an estimate in the **💰 Estimation** tab first to populate the inputs."
+        )
+    else:
+        payload = st.session_state["payload"]
+        st.markdown("### Inputs (from Tab 1)")
+        st.json(payload, expanded=False)
+
+        if st.button("🔬 Run All Models Comparison", type="primary"):
+            with st.spinner("Running all models..."):
+                try:
+                    # 1. CatBoost (already in session state)
+                    ml_effort = st.session_state["result"]["p50_effort"]
+
+                    # 2. COCOMO II
+                    cocomo_payload = {
+                        "function_points": payload["function_points"],
+                        "language": payload["language"],
+                    }
+                    cocomo_res = requests.post(
+                        COCOMO_ENDPOINT, json=cocomo_payload, timeout=10
+                    ).json()
+                    cocomo_effort = cocomo_res["effort_hours"]
+
+                    # 3. Analogy (k-NN)
+                    analogy_payload = {
+                        "function_points": payload["function_points"],
+                        "team_size": payload["team_size"],
+                        "duration": payload["duration"],
+                        "k_neighbors": 3,
+                    }
+                    analogy_res = requests.post(
+                        ANALOGY_ENDPOINT, json=analogy_payload, timeout=10
+                    ).json()
+                    analogy_effort = analogy_res["estimated_effort_hours"]
+
+                    # 4. Monte Carlo
+                    mc_payload = {**payload, "n_simulations": 10000}
+                    mc_res = requests.post(MONTE_CARLO_ENDPOINT, json=mc_payload, timeout=20)
+
+                    if mc_res.status_code == 200:
+                        mc_data = mc_res.json()
+
+                        # --- Display Comparison Table ---
+                        st.markdown("### 📊 Effort Comparison (Hours)")
+                        comparison_df = {
+                            "Model": [
+                                "CatBoost (ML)",
+                                "COCOMO II",
+                                "Analogy (k-NN)",
+                                "Monte-Carlo (P50)",
+                            ],
+                            "Estimated Effort (hrs)": [
+                                f"{ml_effort:,.0f}",
+                                f"{cocomo_effort:,.0f}",
+                                f"{analogy_effort:,.0f}",
+                                f"{mc_data['base_p50_effort']:,.0f}",
+                            ],
+                        }
+                        st.table(comparison_df)
+                        # --- Analyst's Note: Why ML Wins ---
+                        st.markdown("### 🧐 Analyst's Note: Why the models differ")
+
+                        # Calculate the percentage differences dynamically
+                        diff_cocomo = ((cocomo_effort - ml_effort) / ml_effort) * 100
+                        diff_analogy = ((analogy_effort - ml_effort) / ml_effort) * 100
+
+                        st.info(
+                            f"**1. CatBoost (ML) is the Primary Model:** It estimates **{ml_effort:,.0f} hours**. "
+                            f"This model is trained on 589 historical projects and learns complex, non-linear relationships "
+                            f"between team size, duration, and function points. It smooths out outliers to provide the most realistic baseline."
+                        )
+
+                        st.warning(
+                            f"**2. COCOMO II is a Legacy Baseline:** It estimated **{cocomo_effort:,.0f} hours** "
+                            f"(*{diff_cocomo:+.1f}% compared to ML*). COCOMO II is a rigid, formula-based model designed in the 1980s for "
+                            f"Waterfall development. It assumes massive amounts of boilerplate code and lacks the flexibility to "
+                            f"account for modern agile workflows or AI-assisted coding, leading to severe overestimation."
+                        )
+
+                        st.error(
+                            f"**3. Analogy (k-NN) is Susceptible to Outliers:** It estimated **{analogy_effort:,.0f} hours** "
+                            f"(*{diff_analogy:+.1f}% compared to ML*). This model simply averages the 3 most similar historical projects. "
+                            f"If even one of those past projects was a catastrophic failure (e.g., took 10,000 hours), it skews the entire "
+                            f"average. This proves why pure analogy is risky without ML correction."
+                        )
+
+                        st.success(
+                            f"**4. Monte-Carlo uses ML as its Base:** It doesn't estimate effort from scratch. It takes the CatBoost P50 "
+                            f"estimate (**{ml_effort:,.0f} hours**) and runs 10,000 simulations to generate the risk thresholds. "
+                            f"This hybrid approach gives you both an accurate point estimate AND a safe budget range."
+                        )
+
+                        # --- Display Monte-Carlo Histogram ---
+                        st.markdown("### 🎲 Monte-Carlo Cost Distribution")
+                        st.markdown(
+                            f"Ran **{mc_data['n_simulations']:,}** simulations. "
+                            f"The **P80 safe budget** is **₹{mc_data['percentiles']['P80']:,.0f}**."
+                        )
+
+                        # Create histogram
+                        fig_mc = go.Figure(
+                            data=[
+                                go.Histogram(
+                                    x=mc_data["histogram_sample"],
+                                    nbinsx=50,
+                                    marker_color="rgba(100, 149, 237, 0.7)",
+                                )
+                            ]
+                        )
+
+                        # Add vertical lines for P50, P80, P95
+                        colors = {"P50": "orange", "P80": "red", "P95": "darkred"}
+                        for pct, col in colors.items():
+                            fig_mc.add_vline(
+                                x=mc_data["percentiles"][pct],
+                                line_dash="dash",
+                                line_color=col,
+                                annotation_text=f"{pct} (₹{mc_data['percentiles'][pct] / 1000000:.1f}M)",
+                                annotation_position="top",
+                            )
+
+                        fig_mc.update_layout(
+                            title="Simulated Total Cost Distribution",
+                            xaxis_title="Total Cost (INR)",
+                            yaxis_title="Frequency",
+                            showlegend=False,
+                            height=400,
+                            margin=dict(l=20, r=20, t=50, b=20),
+                        )
+                        st.plotly_chart(fig_mc, use_container_width=True)
+
+                        # --- Display Percentiles ---
+                        st.markdown("### 📈 Risk Thresholds (Cost)")
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("P50 (Median)", f"₹{mc_data['percentiles']['P50']:,.0f}")
+                        c2.metric("P80 (Safe)", f"₹{mc_data['percentiles']['P80']:,.0f}")
+                        c3.metric("P90 (Conservative)", f"₹{mc_data['percentiles']['P90']:,.0f}")
+                        c4.metric("P95 (Worst-Case)", f"₹{mc_data['percentiles']['P95']:,.0f}")
+
+                    else:
+                        st.error(f"Monte-Carlo API Error: {mc_res.text}")
+
+                except requests.exceptions.ConnectionError:
+                    st.error("❌ Could not connect to the API.")
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
 
 
 # --- Footer ---
