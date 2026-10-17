@@ -18,9 +18,20 @@ KPIS_ENDPOINT = f"{API_URL}/kpis"
 COCOMO_ENDPOINT = f"{API_URL}/baselines/cocomo"
 ANALOGY_ENDPOINT = f"{API_URL}/baselines/analogy"
 MONTE_CARLO_ENDPOINT = f"{API_URL}/baselines/monte-carlo"
+JIRA_ENDPOINT = f"{API_URL}/integrations/jira/upload"
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Costell", page_icon="📊", layout="wide")
+
+# --- Initialize Session State for Inputs ---
+if "manual_effort" not in st.session_state:
+    st.session_state["manual_effort"] = 1200.0
+if "manual_fp" not in st.session_state:
+    st.session_state["manual_fp"] = 450.0
+if "wbs_data" not in st.session_state:
+    st.session_state["wbs_data"] = None
+if "show_results" not in st.session_state:
+    st.session_state["show_results"] = False
 
 # --- Header ---
 st.title("📊 Costell — AI Cost Estimation")
@@ -29,7 +40,7 @@ st.markdown("---")
 
 
 # ============================================================
-# PDF Report Generator (Kept from previous)
+# PDF Report Generator
 # ============================================================
 def generate_pdf_report(payload: dict, result: dict) -> bytes:
     pdf = FPDF()
@@ -121,7 +132,7 @@ def generate_pdf_report(payload: dict, result: dict) -> bytes:
 
 
 # ============================================================
-# CSV Export Helper (Kept from previous)
+# CSV Export Helper
 # ============================================================
 def generate_csv_report(payload: dict, result: dict) -> str:
     output = StringIO()
@@ -151,75 +162,107 @@ def generate_csv_report(payload: dict, result: dict) -> str:
 # ============================================================
 # TABS
 # ============================================================
-tab1, tab2, tab3 = st.tabs(["💰 Estimation", "📜 History & KPIs", "🔬 Model Comparison"])
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["💰 Estimation", "📜 History & KPIs", "🔬 Model Comparison", "🎛️ Scenario Planner"]
+)
 
 
 # ============================================================
-# TAB 1: Estimation (Kept from previous)
+# TAB 1: Estimation
 # ============================================================
 with tab1:
+    # --- Sidebar ---
     st.sidebar.header("💰 Financial Parameters")
     blended_hourly_rate = st.sidebar.number_input(
-        "Blended Hourly Rate (Rs.)", min_value=100.0, value=2500.0, step=100.0
+        "Blended Hourly Rate (Rs.)", min_value=100.0, value=2500.0, step=100.0, key="sb_rate"
     )
     tooling_cost_per_month = st.sidebar.number_input(
-        "Tooling Cost / Month (Rs.)", min_value=0.0, value=50000.0, step=5000.0
+        "Tooling Cost / Month (Rs.)", min_value=0.0, value=50000.0, step=5000.0, key="sb_tool"
     )
     cloud_cost_per_month = st.sidebar.number_input(
-        "Cloud/AI Infra / Month (Rs.)", min_value=0.0, value=80000.0, step=5000.0
+        "Cloud/AI Infra / Month (Rs.)", min_value=0.0, value=80000.0, step=5000.0, key="sb_cloud"
     )
     contingency_percent = st.sidebar.slider(
-        "Contingency Buffer (%)", min_value=0, max_value=40, value=15, step=1
+        "Contingency Buffer (%)", min_value=0, max_value=40, value=15, step=1, key="sb_cont"
     )
 
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ Project Parameters")
-    team_size = st.sidebar.number_input("Team Size", min_value=1, value=5, step=1)
-    duration = st.sidebar.number_input("Duration (months)", min_value=1, value=12, step=1)
+    team_size = st.sidebar.number_input("Team Size", min_value=1, value=5, step=1, key="sb_team")
+    duration = st.sidebar.number_input(
+        "Duration (months)", min_value=1, value=12, step=1, key="sb_dur"
+    )
     language = st.sidebar.selectbox(
         "Primary Language / Dev Type",
         ["Python", "Java", "C++", "C#", "3GL", "4GL", "Assembly", "Unknown"],
         index=0,
+        key="sb_lang",
     )
 
-    project_name = st.text_input("📝 Project Name", value="Untitled Project")
+    # --- Main Area ---
+    project_name = st.text_input("📝 Project Name", value="Untitled Project", key="proj_name")
 
     st.markdown("## Step 1 — Determine Project Effort")
     effort_mode = st.radio(
         "How would you like to determine the effort?",
-        ["✍️ Manual Input", "🤖 AI Scope Decomposition"],
+        ["✍️ Manual / Jira Input", "🤖 AI Scope Decomposition"],
         horizontal=True,
     )
 
-    if "final_effort" not in st.session_state:
-        st.session_state["final_effort"] = 1200.0
-    if "function_points" not in st.session_state:
-        st.session_state["function_points"] = 450.0
-    if "wbs_data" not in st.session_state:
-        st.session_state["wbs_data"] = None
+    # --- Jira CSV Upload (Inside Manual/Jira Mode) ---
+    if effort_mode == "✍️ Manual / Jira Input":
+        with st.expander("📁 Import Effort from Jira (CSV)"):
+            st.markdown(
+                "Upload a Jira CSV export to automatically calculate effort from Story Points."
+            )
+            uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
-    if effort_mode == "✍️ Manual Input":
+            if uploaded_file is not None:
+                if st.button("Parse Jira CSV"):
+                    with st.spinner("Parsing CSV..."):
+                        try:
+                            files = {
+                                "file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")
+                            }
+                            response = requests.post(JIRA_ENDPOINT, files=files)
+
+                            if response.status_code == 200:
+                                data = response.json()
+                                st.success(f"✅ Successfully parsed {data['task_count']} tasks!")
+                                st.info(
+                                    f"Extracted Effort: **{data['estimated_effort_hours']:,.0f} hours** (from {data['total_story_points']} story points)"
+                                )
+
+                                # Update session state and rerun
+                                st.session_state["manual_effort"] = data["estimated_effort_hours"]
+                                st.session_state["manual_fp"] = max(
+                                    data["total_story_points"] * 45, 100.0
+                                )
+                                st.rerun()
+                            else:
+                                st.error(f"Error: {response.text}")
+                        except Exception as e:
+                            st.error(f"Failed to connect to API: {e}")
+
+    # --- Effort Inputs (Shared by Manual and AI) ---
+    if effort_mode == "✍️ Manual / Jira Input":
         col1, col2 = st.columns(2)
         with col1:
-            st.session_state["final_effort"] = st.number_input(
-                "Estimated Effort (hours)",
-                min_value=1.0,
-                value=st.session_state["final_effort"],
-                step=50.0,
+            st.number_input(
+                "Estimated Effort (hours)", min_value=1.0, step=50.0, key="manual_effort"
             )
         with col2:
-            st.session_state["function_points"] = st.number_input(
-                "Adjusted Function Points (AFP)",
-                min_value=1.0,
-                value=st.session_state["function_points"],
-                step=10.0,
+            st.number_input(
+                "Adjusted Function Points (AFP)", min_value=1.0, step=10.0, key="manual_fp"
             )
-    else:
+
+    else:  # AI Scope Decomposition
         prd_text = st.text_area(
             "Paste your Product Requirement Document (PRD):",
             height=200,
             placeholder="Example: Build a food delivery app...",
         )
+
         if st.button("🔍 Decompose Scope", type="primary"):
             if len(prd_text.strip()) < 50:
                 st.warning("Please paste a longer PRD.")
@@ -235,6 +278,7 @@ with tab1:
                             st.error(f"API Error ({response.status_code}): {response.text}")
                     except requests.exceptions.ConnectionError:
                         st.error("❌ Could not connect to the API.")
+
         if st.session_state.get("wbs_data"):
             wbs = st.session_state["wbs_data"]
             st.markdown("### 📋 Project Summary")
@@ -250,24 +294,32 @@ with tab1:
             )
             total_hours = sum(t["estimated_hours"] for t in wbs["tasks"])
             total_tasks = len(wbs["tasks"])
+
             col1, col2 = st.columns(2)
             col1.metric("Total Tasks", total_tasks)
             col2.metric("Total Estimated Effort", f"{total_hours:,.0f} hrs")
-            st.session_state["final_effort"] = total_hours
-            st.session_state["function_points"] = float(total_tasks * 45)
-            st.success(
-                f"✅ The estimated **{total_hours:,.0f} hours** from the WBS will be used for the cost calculation below."
-            )
 
+            if st.button("✅ Use this WBS for Cost Calculation"):
+                st.session_state["manual_effort"] = total_hours
+                st.session_state["manual_fp"] = float(total_tasks * 45)
+                st.success(f"Effort set to {total_hours:,.0f} hours. Proceed to Step 2.")
+
+    # --- Calculate Button ---
     st.markdown("---")
     st.markdown("## Step 2 — Calculate Project Cost")
+
+    # Display currently selected effort
+    st.caption(
+        f"Current Effort Used for Calculation: **{st.session_state['manual_effort']:,.0f} hours** | **{st.session_state['manual_fp']:,.0f} FP**"
+    )
+
     if st.button("🚀 Calculate Full Project Cost", type="primary"):
         payload = {
             "project_name": project_name,
-            "estimated_effort": st.session_state["final_effort"],
+            "estimated_effort": st.session_state["manual_effort"],
             "team_size": float(team_size),
             "duration": float(duration),
-            "function_points": st.session_state["function_points"],
+            "function_points": st.session_state["manual_fp"],
             "language": language,
             "dataset_source": "user_input",
             "blended_hourly_rate": blended_hourly_rate,
@@ -288,11 +340,14 @@ with tab1:
         except requests.exceptions.ConnectionError:
             st.error("❌ Could not connect to the API.")
 
+    # --- Display Results ---
     if st.session_state.get("show_results"):
         data = st.session_state["result"]
         payload = st.session_state["payload"]
+
         st.markdown("---")
         st.markdown("## 💰 Prediction Results")
+
         col1, col2, col3 = st.columns(3)
         col1.metric(
             "P50 (Most Likely)",
@@ -309,10 +364,12 @@ with tab1:
             f"₹{data['p80_upper_cost']['total_cost']:,.0f}",
             f"{data['p80_upper_effort']:,.0f} hrs",
         )
+
         safe_budget = data["p80_upper_cost"]["total_cost"]
         st.success(
             f"**Safe Budget Recommendation:** Request **₹{safe_budget:,.0f}** to be **80% confident** the project stays within budget."
         )
+
         st.markdown("### 📥 Download Report")
         col_pdf, col_csv, _ = st.columns([1, 1, 2])
         with col_pdf:
@@ -331,6 +388,7 @@ with tab1:
                 mime="text/csv",
                 use_container_width=True,
             )
+
         st.markdown("### 📊 Cost Breakdown (P50 Scenario)")
         p50 = data["p50_cost"]
         st.table(
@@ -345,6 +403,7 @@ with tab1:
                 ],
             }
         )
+
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
@@ -372,6 +431,7 @@ with tab1:
             margin=dict(l=20, r=20, t=50, b=20),
         )
         st.plotly_chart(fig, use_container_width=True)
+
         pie_fig = go.Figure(
             data=[
                 go.Pie(
@@ -391,7 +451,7 @@ with tab1:
 
 
 # ============================================================
-# TAB 2: History & KPIs (Kept from previous)
+# TAB 2: History & KPIs
 # ============================================================
 with tab2:
     st.header("📜 Project History & Variance Tracking")
@@ -424,7 +484,6 @@ with tab2:
 
         st.markdown("---")
         st.markdown("### ✏️ Log Actual Effort & Cost")
-        st.caption("After a project is complete, log the actuals here to track variance over time.")
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             selected_id = st.selectbox(
@@ -442,6 +501,7 @@ with tab2:
             actual_cost = st.number_input(
                 "Actual Cost (₹)", min_value=0.0, value=8000000.0, step=100000.0
             )
+
         if st.button("💾 Save Actuals"):
             try:
                 patch_response = requests.patch(
@@ -459,12 +519,12 @@ with tab2:
 
         st.markdown("---")
         st.markdown("### 📊 Variance KPIs")
-        st.caption("Calculated from all projects with logged actuals.")
         try:
             kpis_response = requests.get(KPIS_ENDPOINT, timeout=10)
             kpis = kpis_response.json() if kpis_response.status_code == 200 else {}
         except requests.exceptions.ConnectionError:
             kpis = {}
+
         if kpis.get("completed_projects", 0) == 0:
             st.info("Log at least one actual to see KPIs.")
         else:
@@ -480,41 +540,31 @@ with tab2:
 
 
 # ============================================================
-# TAB 3: Model Comparison & Monte-Carlo
+# TAB 3: Model Comparison
 # ============================================================
 with tab3:
     st.header("🔬 Model Comparison & Monte-Carlo Simulation")
-    st.markdown(
-        "Run the same project through all four estimation models: "
-        "**ML (CatBoost)**, **COCOMO II**, **Analogy (k-NN)**, and **Monte-Carlo**."
-    )
 
     if "payload" not in st.session_state or "result" not in st.session_state:
-        st.info(
-            "👈 Please run an estimate in the **💰 Estimation** tab first to populate the inputs."
-        )
+        st.info("👈 Please run an estimate in the **💰 Estimation** tab first.")
     else:
         payload = st.session_state["payload"]
-        st.markdown("### Inputs (from Tab 1)")
-        st.json(payload, expanded=False)
 
         if st.button("🔬 Run All Models Comparison", type="primary"):
             with st.spinner("Running all models..."):
                 try:
-                    # 1. CatBoost (already in session state)
                     ml_effort = st.session_state["result"]["p50_effort"]
 
-                    # 2. COCOMO II
-                    cocomo_payload = {
-                        "function_points": payload["function_points"],
-                        "language": payload["language"],
-                    }
                     cocomo_res = requests.post(
-                        COCOMO_ENDPOINT, json=cocomo_payload, timeout=10
+                        COCOMO_ENDPOINT,
+                        json={
+                            "function_points": payload["function_points"],
+                            "language": payload["language"],
+                        },
+                        timeout=10,
                     ).json()
                     cocomo_effort = cocomo_res["effort_hours"]
 
-                    # 3. Analogy (k-NN)
                     analogy_payload = {
                         "function_points": payload["function_points"],
                         "team_size": payload["team_size"],
@@ -526,14 +576,12 @@ with tab3:
                     ).json()
                     analogy_effort = analogy_res["estimated_effort_hours"]
 
-                    # 4. Monte Carlo
                     mc_payload = {**payload, "n_simulations": 10000}
                     mc_res = requests.post(MONTE_CARLO_ENDPOINT, json=mc_payload, timeout=20)
 
                     if mc_res.status_code == 200:
                         mc_data = mc_res.json()
 
-                        # --- Display Comparison Table ---
                         st.markdown("### 📊 Effort Comparison (Hours)")
                         comparison_df = {
                             "Model": [
@@ -550,47 +598,25 @@ with tab3:
                             ],
                         }
                         st.table(comparison_df)
-                        # --- Analyst's Note: Why ML Wins ---
-                        st.markdown("### 🧐 Analyst's Note: Why the models differ")
 
-                        # Calculate the percentage differences dynamically
+                        st.markdown("### 🧐 Analyst's Note")
                         diff_cocomo = ((cocomo_effort - ml_effort) / ml_effort) * 100
                         diff_analogy = ((analogy_effort - ml_effort) / ml_effort) * 100
 
                         st.info(
-                            f"**1. CatBoost (ML) is the Primary Model:** It estimates **{ml_effort:,.0f} hours**. "
-                            f"This model is trained on 589 historical projects and learns complex, non-linear relationships "
-                            f"between team size, duration, and function points. It smooths out outliers to provide the most realistic baseline."
+                            f"**1. CatBoost (ML) is the Primary Model:** It estimates **{ml_effort:,.0f} hours**. Trained on 589 historical projects to smooth out outliers."
                         )
-
                         st.warning(
-                            f"**2. COCOMO II is a Legacy Baseline:** It estimated **{cocomo_effort:,.0f} hours** "
-                            f"(*{diff_cocomo:+.1f}% compared to ML*). COCOMO II is a rigid, formula-based model designed in the 1980s for "
-                            f"Waterfall development. It assumes massive amounts of boilerplate code and lacks the flexibility to "
-                            f"account for modern agile workflows or AI-assisted coding, leading to severe overestimation."
+                            f"**2. COCOMO II is a Legacy Baseline:** It estimated **{cocomo_effort:,.0f} hours** (*{diff_cocomo:+.1f}% compared to ML*). It overestimates because it assumes 1980s Waterfall development."
                         )
-
                         st.error(
-                            f"**3. Analogy (k-NN) is Susceptible to Outliers:** It estimated **{analogy_effort:,.0f} hours** "
-                            f"(*{diff_analogy:+.1f}% compared to ML*). This model simply averages the 3 most similar historical projects. "
-                            f"If even one of those past projects was a catastrophic failure (e.g., took 10,000 hours), it skews the entire "
-                            f"average. This proves why pure analogy is risky without ML correction."
+                            f"**3. Analogy (k-NN) is Susceptible to Outliers:** It estimated **{analogy_effort:,.0f} hours** (*{diff_analogy:+.1f}% compared to ML*). Averaging past projects can skew the result if one project was a disaster."
                         )
-
                         st.success(
-                            f"**4. Monte-Carlo uses ML as its Base:** It doesn't estimate effort from scratch. It takes the CatBoost P50 "
-                            f"estimate (**{ml_effort:,.0f} hours**) and runs 10,000 simulations to generate the risk thresholds. "
-                            f"This hybrid approach gives you both an accurate point estimate AND a safe budget range."
+                            f"**4. Monte-Carlo uses ML as its Base:** It takes the CatBoost estimate (**{ml_effort:,.0f} hours**) and simulates 10,000 scenarios for risk thresholds."
                         )
 
-                        # --- Display Monte-Carlo Histogram ---
                         st.markdown("### 🎲 Monte-Carlo Cost Distribution")
-                        st.markdown(
-                            f"Ran **{mc_data['n_simulations']:,}** simulations. "
-                            f"The **P80 safe budget** is **₹{mc_data['percentiles']['P80']:,.0f}**."
-                        )
-
-                        # Create histogram
                         fig_mc = go.Figure(
                             data=[
                                 go.Histogram(
@@ -600,10 +626,7 @@ with tab3:
                                 )
                             ]
                         )
-
-                        # Add vertical lines for P50, P80, P95
-                        colors = {"P50": "orange", "P80": "red", "P95": "darkred"}
-                        for pct, col in colors.items():
+                        for pct, col in {"P50": "orange", "P80": "red", "P95": "darkred"}.items():
                             fig_mc.add_vline(
                                 x=mc_data["percentiles"][pct],
                                 line_dash="dash",
@@ -611,18 +634,14 @@ with tab3:
                                 annotation_text=f"{pct} (₹{mc_data['percentiles'][pct] / 1000000:.1f}M)",
                                 annotation_position="top",
                             )
-
                         fig_mc.update_layout(
                             title="Simulated Total Cost Distribution",
                             xaxis_title="Total Cost (INR)",
                             yaxis_title="Frequency",
-                            showlegend=False,
                             height=400,
-                            margin=dict(l=20, r=20, t=50, b=20),
                         )
                         st.plotly_chart(fig_mc, use_container_width=True)
 
-                        # --- Display Percentiles ---
                         st.markdown("### 📈 Risk Thresholds (Cost)")
                         c1, c2, c3, c4 = st.columns(4)
                         c1.metric("P50 (Median)", f"₹{mc_data['percentiles']['P50']:,.0f}")
@@ -630,13 +649,141 @@ with tab3:
                         c3.metric("P90 (Conservative)", f"₹{mc_data['percentiles']['P90']:,.0f}")
                         c4.metric("P95 (Worst-Case)", f"₹{mc_data['percentiles']['P95']:,.0f}")
 
-                    else:
-                        st.error(f"Monte-Carlo API Error: {mc_res.text}")
-
-                except requests.exceptions.ConnectionError:
-                    st.error("❌ Could not connect to the API.")
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
+
+
+# ============================================================
+# TAB 4: Scenario Planner
+# ============================================================
+with tab4:
+    st.header("🎛️ Scenario Planner")
+    st.markdown("Compare a **Baseline** plan against a **What-If Scenario**.")
+
+    if "manual_effort" not in st.session_state:
+        st.warning("Please run an estimate in the 💰 Estimation tab first.")
+    else:
+        base_effort = st.session_state["manual_effort"]
+        base_fp = st.session_state["manual_fp"]
+
+        col_base, col_scenario = st.columns(2)
+
+        with col_base:
+            st.markdown("### 🟦 Baseline Plan")
+            base_team = st.number_input("Team Size", min_value=1, value=5, step=1, key="base_team")
+            base_duration = st.number_input(
+                "Duration (months)", min_value=1, value=12, step=1, key="base_dur"
+            )
+            base_rate = st.number_input(
+                "Hourly Rate (₹)", min_value=100.0, value=2500.0, step=100.0, key="base_rate"
+            )
+            base_tooling = st.number_input(
+                "Tooling / Month (₹)", min_value=0.0, value=50000.0, step=5000.0, key="base_tool"
+            )
+            base_cloud = st.number_input(
+                "Cloud / Month (₹)", min_value=0.0, value=80000.0, step=5000.0, key="base_cloud"
+            )
+
+        with col_scenario:
+            st.markdown("### 🟧 What-If Scenario")
+            scen_team = st.number_input("Team Size", min_value=1, value=8, step=1, key="scen_team")
+            scen_duration = st.number_input(
+                "Duration (months)", min_value=1, value=8, step=1, key="scen_dur"
+            )
+            scen_rate = st.number_input(
+                "Hourly Rate (₹)", min_value=100.0, value=3000.0, step=100.0, key="scen_rate"
+            )
+            scen_tooling = st.number_input(
+                "Tooling / Month (₹)", min_value=0.0, value=50000.0, step=5000.0, key="scen_tool"
+            )
+            scen_cloud = st.number_input(
+                "Cloud / Month (₹)", min_value=0.0, value=80000.0, step=5000.0, key="scen_cloud"
+            )
+
+        if st.button("⚖️ Compare Scenarios", type="primary"):
+            with st.spinner("Calculating scenarios..."):
+                try:
+                    base_payload = {
+                        "project_name": "Baseline",
+                        "estimated_effort": base_effort,
+                        "team_size": float(base_team),
+                        "duration": float(base_duration),
+                        "function_points": base_fp,
+                        "language": "Python",
+                        "dataset_source": "user_input",
+                        "blended_hourly_rate": base_rate,
+                        "tooling_cost_per_month": base_tooling,
+                        "cloud_cost_per_month": base_cloud,
+                        "contingency_percent": 15.0,
+                    }
+                    scen_payload = base_payload.copy()
+                    scen_payload.update(
+                        {
+                            "project_name": "Scenario A",
+                            "team_size": float(scen_team),
+                            "duration": float(scen_duration),
+                            "blended_hourly_rate": scen_rate,
+                            "tooling_cost_per_month": scen_tooling,
+                            "cloud_cost_per_month": scen_cloud,
+                        }
+                    )
+
+                    res_base = requests.post(ESTIMATE_ENDPOINT, json=base_payload).json()
+                    res_scen = requests.post(ESTIMATE_ENDPOINT, json=scen_payload).json()
+
+                    b_p50, b_p80 = (
+                        res_base["p50_cost"]["total_cost"],
+                        res_base["p80_upper_cost"]["total_cost"],
+                    )
+                    s_p50, s_p80 = (
+                        res_scen["p50_cost"]["total_cost"],
+                        res_scen["p80_upper_cost"]["total_cost"],
+                    )
+
+                    st.markdown("### 📊 Cost Comparison")
+                    fig = go.Figure(
+                        data=[
+                            go.Bar(
+                                name="Baseline",
+                                x=["P50 (Most Likely)", "P80 (Safe Budget)"],
+                                y=[b_p50, b_p80],
+                                marker_color="#3b82f6",
+                            ),
+                            go.Bar(
+                                name="Scenario A",
+                                x=["P50 (Most Likely)", "P80 (Safe Budget)"],
+                                y=[s_p50, s_p80],
+                                marker_color="#f97316",
+                            ),
+                        ]
+                    )
+                    fig.update_layout(
+                        barmode="group",
+                        title="Baseline vs Scenario Cost",
+                        yaxis_title="Cost (INR)",
+                        height=400,
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    st.markdown("### 💡 Financial Impact")
+                    delta_p50, delta_p80 = s_p50 - b_p50, s_p80 - b_p80
+                    c1, c2 = st.columns(2)
+                    c1.metric(
+                        "P50 Difference", f"₹{delta_p50:,.0f}", f"{delta_p50 / b_p50 * 100:+.1f}%"
+                    )
+                    c2.metric(
+                        "P80 Difference", f"₹{delta_p80:,.0f}", f"{delta_p80 / b_p80 * 100:+.1f}%"
+                    )
+
+                    if delta_p80 < 0:
+                        st.success(
+                            f"✅ **Scenario A saves ₹{abs(delta_p80):,.0f}** compared to Baseline."
+                        )
+                    else:
+                        st.warning(f"⚠️ **Scenario A costs ₹{delta_p80:,.0f} more** than Baseline.")
+
+                except Exception as e:
+                    st.error(f"Error calculating scenarios: {e}")
 
 
 # --- Footer ---

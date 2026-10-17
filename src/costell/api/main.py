@@ -374,3 +374,29 @@ def monte_carlo_baseline(request: MonteCarloRequest):
     result["base_p50_effort"] = round(p50_effort, 2)
 
     return result
+
+
+# ============================================================
+# INTEGRATION: Jira CSV Upload
+# ============================================================
+from fastapi import File, UploadFile
+
+from costell.data.ingestion.jira_importer import parse_jira_csv
+
+
+@app.post("/integrations/jira/upload")
+async def upload_jira_csv(file: UploadFile = File(...)):
+    """
+    Upload a Jira CSV export and extract total effort.
+    """
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported.")
+
+    try:
+        contents = await file.read()
+        result = parse_jira_csv(contents)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
